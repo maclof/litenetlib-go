@@ -2,43 +2,58 @@ package litenetlib
 
 import (
 	"log"
-	"fmt"
-	"net"
 	"sync"
+	"errors"
 
 	"github.com/enriquebris/goconcurrentqueue"
 )
 
 type NetManager struct {
-	serverConn *net.UDPConn
+	config *NetManagerConfig
+	listener INetListener
+	socket *NetSocket
 	netEventsQueue *goconcurrentqueue.FIFO
 	netEventsQueueMutex sync.Mutex
 	unsyncedEvents bool
 }
 
-func (netManager *NetManager) Start(addr string, port int) error {
-	log.Printf("Listening for UDP packets on: %s:%d", addr, port)
+type NetManagerConfig struct {
+	AddrV4 string
+	PortV4 int
+	AddrV6 string
+	PortV6 int
+}
 
-	listenAddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", addr, port))
-	if err != nil {
-		return err
+func (netManager *NetManager) Start() error {
+	log.Printf("Starting net manager...")
+
+	if netManager.config.AddrV4 != "" && netManager.config.PortV4 != 0 {
+		err := netManager.socket.BindV4(netManager.config.AddrV4, netManager.config.PortV4)
+		if err != nil {
+			return err
+		}
 	}
 
-	serverConn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		return err
+	if netManager.config.AddrV6 != "" && netManager.config.PortV6 != 0 {
+		err := netManager.socket.BindV6(netManager.config.AddrV6, netManager.config.PortV6)
+		if err != nil {
+			return err
+		}
 	}
-	netManager.serverConn = serverConn
+
+	if !netManager.socket.IsListening() {
+		return errors.New("No valid socket listeners have been setup.")
+	}
 
 	return nil
 }
 
 func (netManager *NetManager) Stop() {
-	if netManager.serverConn == nil {
+	if netManager.socket == nil {
 		return
 	}
-	log.Printf("Stopping listening for UDP packets.")
-	netManager.serverConn.Close()
+	log.Printf("Stopping net manager...")
+	netManager.socket.Close()
 }
 
 func (netManager *NetManager) PollEvents() {
@@ -67,8 +82,11 @@ func (netManager *NetManager) processEvent(event interface{}) {
 
 }
 
-func NewNetManager() *NetManager {
+func NewNetManager(config *NetManagerConfig, listener INetListener) *NetManager {
 	return &NetManager{
+		config: config,
+		listener: listener,
+		socket: NewNetSocket(listener),
 		unsyncedEvents: false,
 		netEventsQueue: goconcurrentqueue.NewFIFO(),
 	}
