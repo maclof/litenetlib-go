@@ -2,6 +2,7 @@ package litenetlib
 
 import (
 	"log"
+	"net"
 	"sync"
 	"errors"
 
@@ -9,19 +10,26 @@ import (
 )
 
 type NetManager struct {
-	config *NetManagerConfig
-	listener INetListener
-	socket *NetSocket
-	netEventsQueue *goconcurrentqueue.FIFO
+	config              *NetManagerConfig
+	listener            INetListener
+	socket              *NetSocket
+	stats               *NetStatistics
+	netEventsQueue      *goconcurrentqueue.FIFO
 	netEventsQueueMutex sync.Mutex
-	unsyncedEvents bool
+	unsyncedEvents      bool
+	packetsReceived     int
+	bytesReceived       int
 }
 
 type NetManagerConfig struct {
-	AddrV4 string
-	PortV4 int
-	AddrV6 string
-	PortV6 int
+	AddrV4                     string
+	PortV4                     int
+	AddrV6                     string
+	PortV6                     int
+	StatsEnabled               bool
+	BroadcastReceiveEnabled    bool
+	UnconnectedMessagesEnabled bool
+	NatPunchEnabled            bool
 }
 
 func (netManager *NetManager) Start() error {
@@ -62,10 +70,10 @@ func (netManager *NetManager) PollEvents() {
 	}
 	netManager.netEventsQueueMutex.Lock()
 	defer netManager.netEventsQueueMutex.Unlock()
-	log.Println("PollEvents()")
+	// log.Println("PollEvents()")
 	for {
 		if netManager.netEventsQueue.GetLen() == 0 {
-			log.Println("Queue is empty")
+			// log.Println("Queue is empty")
 			return
 		} else {
 			event, err := netManager.netEventsQueue.Dequeue()
@@ -79,17 +87,92 @@ func (netManager *NetManager) PollEvents() {
 }
 
 func (netManager *NetManager) processEvent(event interface{}) {
+	log.Println("processEvent")
+}
 
+func (netManager *NetManager) Stats() *NetStatistics {
+	return netManager.stats
+}
+
+type socketListener struct {
+	netManager *NetManager
+}
+
+func (listener *socketListener) OnMessageReceived(numBytes int, buf []byte, addr *net.UDPAddr) {
+	log.Println("OnMessageReceived()")
+
+	netManager := listener.netManager
+
+	if netManager.config.StatsEnabled {
+		stats := netManager.stats
+		stats.PacketsReceived++;
+		stats.BytesReceived += int64(numBytes);
+
+		log.Printf("Packets received: %d", stats.PacketsReceived)
+		log.Printf("Bytes received: %d", stats.BytesReceived)
+	}
+
+	if buf[0] == NetPacketProperty_Empty {
+		return
+	}
+
+	packet, err := NewNetPacket(buf, 0, numBytes)
+	if err != nil {
+		return
+	}
+
+	log.Printf("Packet length: %d", packet.Length())
+
+	switch packet.Property() {
+	case NetPacketProperty_ConnectRequest:
+		log.Println("ConnectRequest")
+		// if (NetConnectRequestPacket.GetProtocolId(packet) != NetConstants.ProtocolId)
+		// SendRawAndRecycle(NetPacketPool.GetWithProperty(PacketProperty.InvalidProtocol), remoteEndPoint);
+		break
+
+	case NetPacketProperty_Broadcast:
+		if !netManager.config.BroadcastReceiveEnabled {
+			return
+		}
+		log.Println("Broadcast")
+		// CreateEvent(NetEvent.EType.Broadcast, remoteEndPoint: remoteEndPoint, readerSource: packet);
+		break
+
+	case NetPacketProperty_UnconnectedMessage:
+		if !netManager.config.UnconnectedMessagesEnabled {
+			return
+		}
+		log.Println("UnconnectedMessage")
+		// CreateEvent(NetEvent.EType.ReceiveUnconnected, remoteEndPoint: remoteEndPoint, readerSource: packet);
+		break
+
+	case NetPacketProperty_NatMessage:
+		if !netManager.config.NatPunchEnabled {
+			return
+		}
+		log.Println("NatMessage")
+		// NatPunchModule.ProcessMessage(remoteEndPoint, packet);
+		break
+	}
 }
 
 func NewNetManager(config *NetManagerConfig, listener INetListener) *NetManager {
-	return &NetManager{
+	netManager := &NetManager{
 		config: config,
 		listener: listener,
-		socket: NewNetSocket(listener),
 		unsyncedEvents: false,
 		netEventsQueue: goconcurrentqueue.NewFIFO(),
 	}
+
+	netManager.socket = NewNetSocket(&socketListener{
+		netManager: netManager,
+	})
+
+	if config.StatsEnabled {
+		netManager.stats = NewNetStatistics()
+	}
+
+	return netManager
 }
 
 

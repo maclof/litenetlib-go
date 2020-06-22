@@ -15,7 +15,6 @@ package main
 
 import (
 	"log"
-	"net"
 	"time"
 
 	"github.com/maclof/litenetlib-go"
@@ -23,18 +22,15 @@ import (
 
 type NetListener struct {}
 
-func (netListener *NetListener) OnMessageReceived(numBytes int, buf []byte, addr *net.UDPAddr) {
-	log.Println("OnMessageReceived()")
-}
-
 func main() {
 	listener := &NetListener{}
 
 	netManager := litenetlib.NewNetManager(&litenetlib.NetManagerConfig{
 		AddrV4: "127.0.0.1",
 		PortV4: 9050,
-		// AddrV6: "::1",
-		// PortV6: 9050,
+		AddrV6: "::1",
+		PortV6: 9050,
+		StatsEnabled: true,
 	}, listener)
 
 	err := netManager.Start()

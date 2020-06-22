@@ -7,11 +7,15 @@ import (
 )
 
 type NetSocket struct {
-	listener INetListener
+	listener    INetSocketListener
 	isRunningV4 bool
-	udpConnV4 *net.UDPConn
+	udpConnV4   *net.UDPConn
 	isRunningV6 bool
-	udpConnV6 *net.UDPConn
+	udpConnV6   *net.UDPConn
+}
+
+type INetSocketListener interface {
+	OnMessageReceived(numBytes int, buf []byte, addr *net.UDPAddr)
 }
 
 func (netSocket *NetSocket) BindV4(addr string, port int) error {
@@ -27,6 +31,7 @@ func (netSocket *NetSocket) BindV4(addr string, port int) error {
 		return err
 	}
 	netSocket.udpConnV4 = udpConnV4
+	netSocket.isRunningV4 = true
 
 	go netSocket.ReceiveV4Packets()
 
@@ -46,6 +51,7 @@ func (netSocket *NetSocket) BindV6(addr string, port int) error {
 		return err
 	}
 	netSocket.udpConnV6 = udpConnV6
+	netSocket.isRunningV6 = true
 
 	go netSocket.ReceiveV6Packets()
 
@@ -65,11 +71,15 @@ func (netSocket *NetSocket) ReceiveV4Packets() {
 			continue
 		}
 
-		debugMsg := fmt.Sprintf("Received V4 UDP packet: len(%d) - ", len(buf))
-		for i := 0; i < len(buf); i++ {
-			debugMsg += fmt.Sprintf("%d ", buf[i])
+		if numBytes == 0 {
+			continue
 		}
-		log.Println(debugMsg)
+
+		// debugMsg := fmt.Sprintf("Received V4 UDP packet: len(%d) - ", len(buf))
+		// for i := 0; i < len(buf); i++ {
+		// 	debugMsg += fmt.Sprintf("%d ", buf[i])
+		// }
+		// log.Println(debugMsg)
 
 		netSocket.listener.OnMessageReceived(numBytes, buf, addr);
 	}
@@ -88,11 +98,15 @@ func (netSocket *NetSocket) ReceiveV6Packets() {
 			continue
 		}
 
-		debugMsg := fmt.Sprintf("Received V6 UDP packet: len(%d) - ", len(buf))
-		for i := 0; i < len(buf); i++ {
-			debugMsg += fmt.Sprintf("%d ", buf[i])
+		if numBytes == 0 {
+			continue
 		}
-		log.Println(debugMsg)
+
+		// debugMsg := fmt.Sprintf("Received V6 UDP packet: len(%d) - ", len(buf))
+		// for i := 0; i < len(buf); i++ {
+		// 	debugMsg += fmt.Sprintf("%d ", buf[i])
+		// }
+		// log.Println(debugMsg)
 
 		netSocket.listener.OnMessageReceived(numBytes, buf, addr);
 	}
@@ -125,7 +139,7 @@ func (netSocket *NetSocket) IsListening() bool {
 	return netSocket.udpConnV4 != nil || netSocket.udpConnV6 != nil
 }
 
-func NewNetSocket(listener INetListener) *NetSocket {
+func NewNetSocket(listener INetSocketListener) *NetSocket {
 	return &NetSocket{
 		listener: listener,
 	}
