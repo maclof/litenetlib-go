@@ -33,7 +33,7 @@ func (netSocket *NetSocket) BindV4(addr string, port int) error {
 	netSocket.udpConnV4 = udpConnV4
 	netSocket.isRunningV4 = true
 
-	go netSocket.ReceiveV4Packets()
+	go netSocket.receiveV4()
 
 	return nil
 }
@@ -53,12 +53,12 @@ func (netSocket *NetSocket) BindV6(addr string, port int) error {
 	netSocket.udpConnV6 = udpConnV6
 	netSocket.isRunningV6 = true
 
-	go netSocket.ReceiveV6Packets()
+	go netSocket.receiveV6()
 
 	return nil
 }
 
-func (netSocket *NetSocket) ReceiveV4Packets() {
+func (netSocket *NetSocket) receiveV4() {
 	var buf []byte
 	for {
 		if !netSocket.isRunningV4 {
@@ -75,17 +75,11 @@ func (netSocket *NetSocket) ReceiveV4Packets() {
 			continue
 		}
 
-		// debugMsg := fmt.Sprintf("Received V4 UDP packet: len(%d) - ", len(buf))
-		// for i := 0; i < len(buf); i++ {
-		// 	debugMsg += fmt.Sprintf("%d ", buf[i])
-		// }
-		// log.Println(debugMsg)
-
 		netSocket.listener.OnMessageReceived(numBytes, buf, addr);
 	}
 }
 
-func (netSocket *NetSocket) ReceiveV6Packets() {
+func (netSocket *NetSocket) receiveV6() {
 	var buf []byte
 	for {
 		if !netSocket.isRunningV6 {
@@ -101,12 +95,6 @@ func (netSocket *NetSocket) ReceiveV6Packets() {
 		if numBytes == 0 {
 			continue
 		}
-
-		// debugMsg := fmt.Sprintf("Received V6 UDP packet: len(%d) - ", len(buf))
-		// for i := 0; i < len(buf); i++ {
-		// 	debugMsg += fmt.Sprintf("%d ", buf[i])
-		// }
-		// log.Println(debugMsg)
 
 		netSocket.listener.OnMessageReceived(numBytes, buf, addr);
 	}

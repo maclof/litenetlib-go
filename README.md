@@ -1,4 +1,3 @@
-
 # LiteNetLib-Go
 A Golang port of the LiteNetLib Lite reliable UDP library (https://github.com/RevenantX/LiteNetLib)
 

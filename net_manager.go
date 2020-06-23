@@ -6,19 +6,24 @@ import (
 	"sync"
 	"errors"
 
+	"github.com/emirpasic/gods/maps/hashmap"
 	"github.com/enriquebris/goconcurrentqueue"
 )
 
 type NetManager struct {
-	config              *NetManagerConfig
-	listener            INetListener
-	socket              *NetSocket
-	stats               *NetStatistics
-	netEventsQueue      *goconcurrentqueue.FIFO
-	netEventsQueueMutex sync.Mutex
-	unsyncedEvents      bool
-	packetsReceived     int
-	bytesReceived       int
+	config               *NetManagerConfig
+	listener             INetListener
+	socket               *NetSocket
+	stats                *NetStatistics
+	peers                *hashmap.Map
+	peersMutex           sync.Mutex
+	connectRequests      *hashmap.Map
+	connectRequestsMutex sync.Mutex
+	netEventsQueue       *goconcurrentqueue.FIFO
+	netEventsQueueMutex  sync.Mutex
+	unsyncedEvents       bool
+	packetsReceived      int
+	bytesReceived        int
 }
 
 type NetManagerConfig struct {
@@ -76,42 +81,25 @@ func (netManager *NetManager) PollEvents() {
 			// log.Println("Queue is empty")
 			return
 		} else {
-			event, err := netManager.netEventsQueue.Dequeue()
+			eventInterface, err := netManager.netEventsQueue.Dequeue()
 			if err != nil {
 				return
 			}
 
-			netManager.processEvent(event)
+			netManager.processEvent(eventInterface.(*NetEvent))
 		}
 	}
-}
-
-func (netManager *NetManager) processEvent(event interface{}) {
-	log.Println("processEvent")
 }
 
 func (netManager *NetManager) Stats() *NetStatistics {
 	return netManager.stats
 }
 
-type socketListener struct {
-	netManager *NetManager
+func (netManager *NetManager) processEvent(event *NetEvent) {
+	log.Println("processEvent")
 }
 
-func (listener *socketListener) OnMessageReceived(numBytes int, buf []byte, addr *net.UDPAddr) {
-	log.Println("OnMessageReceived()")
-
-	netManager := listener.netManager
-
-	if netManager.config.StatsEnabled {
-		stats := netManager.stats
-		stats.PacketsReceived++;
-		stats.BytesReceived += int64(numBytes);
-
-		log.Printf("Packets received: %d", stats.PacketsReceived)
-		log.Printf("Bytes received: %d", stats.BytesReceived)
-	}
-
+func (netManager *NetManager) dataReceived(numBytes int, buf []byte, addr *net.UDPAddr) {
 	if buf[0] == NetPacketProperty_Empty {
 		return
 	}
@@ -121,11 +109,20 @@ func (listener *socketListener) OnMessageReceived(numBytes int, buf []byte, addr
 		return
 	}
 
+	if netManager.config.StatsEnabled {
+		stats := netManager.stats
+		stats.PacketsReceived++;
+		stats.BytesReceived += int64(packet.Length());
+
+		log.Printf("Packets received: %d", stats.PacketsReceived)
+		log.Printf("Bytes received: %d", stats.BytesReceived)
+	}
+
 	log.Printf("Packet length: %d", packet.Length())
 
 	switch packet.Property() {
 	case NetPacketProperty_ConnectRequest:
-		log.Println("ConnectRequest")
+		// todo:
 		// if (NetConnectRequestPacket.GetProtocolId(packet) != NetConstants.ProtocolId)
 		// SendRawAndRecycle(NetPacketPool.GetWithProperty(PacketProperty.InvalidProtocol), remoteEndPoint);
 		break
@@ -134,37 +131,125 @@ func (listener *socketListener) OnMessageReceived(numBytes int, buf []byte, addr
 		if !netManager.config.BroadcastReceiveEnabled {
 			return
 		}
-		log.Println("Broadcast")
-		// CreateEvent(NetEvent.EType.Broadcast, remoteEndPoint: remoteEndPoint, readerSource: packet);
+		netManager.newNetEvent(&NetEvent{
+			eventType: NetEventType_Broadcast,
+			addr: addr,
+			packet: packet,
+		})
 		break
 
 	case NetPacketProperty_UnconnectedMessage:
 		if !netManager.config.UnconnectedMessagesEnabled {
 			return
 		}
-		log.Println("UnconnectedMessage")
-		// CreateEvent(NetEvent.EType.ReceiveUnconnected, remoteEndPoint: remoteEndPoint, readerSource: packet);
+		netManager.newNetEvent(&NetEvent{
+			eventType: NetEventType_ReceiveUnconnected,
+			addr: addr,
+			packet: packet,
+		})
 		break
 
 	case NetPacketProperty_NatMessage:
 		if !netManager.config.NatPunchEnabled {
 			return
 		}
-		log.Println("NatMessage")
+		// todo:
 		// NatPunchModule.ProcessMessage(remoteEndPoint, packet);
 		break
 	}
+
+	netManager.peersMutex.Lock()
+	peerInterface, peerFound := netManager.peers.Get(addr.String())
+	netManager.peersMutex.Unlock()
+
+	var peer *NetPeer
+	if peerFound {
+		peer = peerInterface.(*NetPeer)
+	}
+
+	switch packet.Property() {
+	case NetPacketProperty_ConnectRequest:
+		netManager.processConnectRequest(peer, addr, packet);
+		break
+
+	case NetPacketProperty_PeerNotFound:
+		log.Println("PeerNotFound")
+		break
+
+	case NetPacketProperty_InvalidProtocol:
+		log.Println("InvalidProtocol")
+		break
+
+	case NetPacketProperty_Disconnect:
+		log.Println("Disconnect")
+		break
+
+	case NetPacketProperty_ConnectAccept:
+		log.Println("ConnectAccept")
+		break
+
+	default:
+		if peerFound {
+			peer.ProcessPacket(packet)
+		} else {
+			// todo:
+			// SendRawAndRecycle(NetPacketPool.GetWithProperty(PacketProperty.PeerNotFound), remoteEndPoint);
+		}
+		break
+	}
+}
+
+func (netManager *NetManager) newNetEvent(event *NetEvent) {
+	netManager.netEventsQueueMutex.Lock()
+	netManager.netEventsQueue.Enqueue(event)
+	netManager.netEventsQueueMutex.Unlock()
+}
+
+func (netManager *NetManager) processConnectRequest(peer *NetPeer, addr *net.UDPAddr, packet *NetPacket) {
+	if peer != nil {
+
+	}
+
+	netManager.connectRequestsMutex.Lock()
+	connectRequestInterface, connectRequestFound := netManager.connectRequests.Get(addr.String())
+	netManager.connectRequestsMutex.Unlock()
+
+	var connectRequest *ConnectRequest
+	if connectRequestFound {
+		connectRequest = connectRequestInterface.(*ConnectRequest)
+		connectRequest.UpdateRequest(packet)
+	} else {
+		netManager.connectRequests.Put(addr.String(), &ConnectRequest{
+			addr: addr,
+			packet: packet,
+		})
+	}
+	
+	netManager.newNetEvent(&NetEvent{
+		eventType: NetEventType_ConnectionRequest,
+		connectRequest: connectRequest,
+	})
+}
+
+type netManagerSocketListener struct {
+	netManager *NetManager
+}
+
+func (listener *netManagerSocketListener) OnMessageReceived(numBytes int, buf []byte, addr *net.UDPAddr) {
+	listener.netManager.dataReceived(numBytes, buf, addr)
 }
 
 func NewNetManager(config *NetManagerConfig, listener INetListener) *NetManager {
 	netManager := &NetManager{
 		config: config,
 		listener: listener,
-		unsyncedEvents: false,
+		peers: hashmap.New(),
+		connectRequests: hashmap.New(),
 		netEventsQueue: goconcurrentqueue.NewFIFO(),
+		unsyncedEvents: false,
 	}
 
-	netManager.socket = NewNetSocket(&socketListener{
+	netManager.socket = NewNetSocket(&netManagerSocketListener{
 		netManager: netManager,
 	})
 
@@ -174,5 +259,3 @@ func NewNetManager(config *NetManagerConfig, listener INetListener) *NetManager 
 
 	return netManager
 }
-
-
